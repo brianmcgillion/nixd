@@ -206,25 +206,30 @@ void scanWorkspaceFiles(const std::string &RootPath,
   size_t FilesProcessed = 0;
 
   try {
-    for (const auto &Entry : fs::recursive_directory_iterator(
+    for (auto Entry : fs::recursive_directory_iterator(
              RootPath, fs::directory_options::skip_permission_denied)) {
       if (FilesProcessed >= MaxFiles)
         break;
 
+      const auto &Path = Entry.path();
+
+      // Early prune excluded directories
+      if (Entry.is_directory()) {
+        std::string DirName = Path.filename().string();
+        if (DirName == ".git" || DirName == ".direnv" ||
+            DirName == "result" || DirName == "node_modules") {
+          Entry.disable_recursion_pending();
+          continue;
+        }
+      }
+
       if (!Entry.is_regular_file())
         continue;
 
-      const auto &Path = Entry.path();
       if (Path.extension() != ".nix")
         continue;
 
-      // Skip common directories we don't want to index
       std::string PathStr = Path.string();
-      if (PathStr.find("/.git/") != std::string::npos ||
-          PathStr.find("/.direnv/") != std::string::npos ||
-          PathStr.find("/result") != std::string::npos ||
-          PathStr.find("/node_modules/") != std::string::npos)
-        continue;
 
       FilesProcessed++;
 
