@@ -26,6 +26,7 @@ libnixd_lib = library(
     'Controller/SemanticTokens.cpp',
     'Controller/Support.cpp',
     'Controller/TextDocumentSync.cpp',
+    'Controller/WorkspaceSymbol.cpp',
     'Eval/AttrSetClient.cpp',
     'Eval/AttrSetProvider.cpp',
     'Eval/Launch.cpp',

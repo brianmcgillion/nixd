@@ -114,6 +114,7 @@ Controller::Controller(std::unique_ptr<lspserver::InboundPort> In,
   // Workspace features
   Registry.addNotification("workspace/didChangeConfiguration", this,
                            &Controller::onDidChangeConfiguration);
+  Registry.addMethod("workspace/symbol", this, &Controller::onWorkspaceSymbol);
 
   WorkspaceConfiguration = mkOutMethod<ConfigurationParams, llvm::json::Value>(
       "workspace/configuration");
