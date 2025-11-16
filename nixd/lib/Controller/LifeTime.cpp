@@ -92,7 +92,15 @@ void Controller::evalExprWithProgress(AttrSetClient &Client,
 }
 
 void Controller::buildNixpkgsIndex() {
+  // Only allow one build at a time
+  bool expected = false;
+  if (!IndexBuildInProgress.compare_exchange_strong(expected, true)) {
+    lspserver::log("Nixpkgs index build already in progress, skipping");
+    return;
+  }
+
   if (!nixpkgsClient()) {
+    IndexBuildInProgress = false;
     lspserver::log("Cannot build nixpkgs index: nixpkgs client not available");
     return;
   }
@@ -103,6 +111,7 @@ void Controller::buildNixpkgsIndex() {
   struct IndexState {
     std::unordered_set<std::string> Functions;
     std::atomic<size_t> TotalPending{0};
+    std::atomic<size_t> ScopesRemaining{0};
     std::mutex FunctionsLock;
   };
   auto State = std::make_shared<IndexState>();
@@ -121,6 +130,10 @@ void Controller::buildNixpkgsIndex() {
         lspserver::elog("Failed to get {0} attributes for indexing: {1}",
                         ScopePrefix.empty() ? "nixpkgs" : ScopePrefix,
                         Resp.takeError());
+        // Scope completed (with error), check if we should reset the flag
+        if (--State->ScopesRemaining == 0 && State->TotalPending == 0) {
+          IndexBuildInProgress = false;
+        }
         return;
       }
 
@@ -163,15 +176,27 @@ void Controller::buildNixpkgsIndex() {
             NixpkgsFunctions = std::move(State->Functions);
             lspserver::log("Nixpkgs index built: {0} functions",
                            NixpkgsFunctions.size());
+            // Reset flag only if all scopes are also done
+            if (State->ScopesRemaining == 0) {
+              IndexBuildInProgress = false;
+            }
           }
         };
 
         nixpkgsClient()->attrpathInfo(InfoParams, std::move(OnInfo));
       }
+
+      // Scope completed (successfully), check if we should reset the flag
+      if (--State->ScopesRemaining == 0 && State->TotalPending == 0) {
+        IndexBuildInProgress = false;
+      }
     };
 
     nixpkgsClient()->attrpathComplete(Params, std::move(OnComplete));
   };
+
+  // We're indexing 2 scopes
+  State->ScopesRemaining = 2;
 
   // Index top-level nixpkgs (fetchurl, writeShellApplication, etc.)
   indexScope({}, "");

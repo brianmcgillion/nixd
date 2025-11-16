@@ -55,6 +55,7 @@ private:
   std::mutex NixpkgsIndexLock;
   std::unordered_set<std::string>
       NixpkgsFunctions; // GUARDED_BY(NixpkgsIndexLock)
+  std::atomic<bool> IndexBuildInProgress{false};
 
   std::mutex ConfigLock;
   Configuration Config; // GUARDED_BY(ConfigLock)
