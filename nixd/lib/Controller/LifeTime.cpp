@@ -144,7 +144,7 @@ void Controller::buildNixpkgsIndex() {
         return;
       }
 
-      State->PendingInfos += Resp->size();
+      State->PendingInfos.fetch_add(Resp->size());
 
       // For each attribute, query its info to determine if it's a function
       for (const auto &Name : *Resp) {
