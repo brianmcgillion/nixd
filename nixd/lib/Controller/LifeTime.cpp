@@ -158,7 +158,8 @@ void Controller::buildNixpkgsIndex() {
           }
 
           // When all queries complete, update the index
-          if (--State->TotalPending == 0) {
+          // Decrement and check if we were the one to reach 0
+          if (State->TotalPending.fetch_sub(1) == 1) {
             std::lock_guard _(NixpkgsIndexLock);
             NixpkgsFunctions = std::move(State->Functions);
             lspserver::log("Nixpkgs index built: {0} functions",
