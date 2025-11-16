@@ -18,6 +18,7 @@
 #include <nixf/Sema/VariableLookup.h>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -47,13 +48,13 @@ void collectWorkspaceSymbols(
   auto matchesQuery = [&Query](const std::string &Name) {
     if (Query.empty())
       return true;
-    // Case-insensitive substring search
+    // Case-insensitive substring search using locale-independent ASCII lowercase
     std::string LowerName = Name;
     std::string LowerQuery = Query;
     std::transform(LowerName.begin(), LowerName.end(), LowerName.begin(),
-                   ::tolower);
+                   [](unsigned char c) { return std::tolower(c); });
     std::transform(LowerQuery.begin(), LowerQuery.end(), LowerQuery.begin(),
-                   ::tolower);
+                   [](unsigned char c) { return std::tolower(c); });
     return LowerName.find(LowerQuery) != std::string::npos;
   };
 
