@@ -277,12 +277,11 @@ void Controller::onWorkspaceSymbol(
         return Symbols;
       }
 
-      // Get a pointer to the nixpkgs index (thread-safe read)
-      const std::unordered_set<std::string> *NixpkgsFunctionsPtr = nullptr;
+      // Copy the nixpkgs index for thread-safe use
+      std::unordered_set<std::string> NixpkgsFunctionsCopy;
       {
         std::lock_guard G(NixpkgsIndexLock);
-        if (!NixpkgsFunctions.empty())
-          NixpkgsFunctionsPtr = &NixpkgsFunctions;
+        NixpkgsFunctionsCopy = NixpkgsFunctions;
       }
 
       // First, collect from open documents
@@ -295,13 +294,13 @@ void Controller::onWorkspaceSymbol(
             continue;
           collectWorkspaceSymbols(TU->ast().get(), Symbols,
                                   *TU->variableLookup(), TU->src(), FilePath,
-                                  Query, NixpkgsFunctionsPtr);
+                                  Query, &NixpkgsFunctionsCopy);
         }
       }
 
       // Then scan workspace files if we have a workspace root
       if (WorkspaceRoot) {
-        scanWorkspaceFiles(*WorkspaceRoot, Symbols, Query, NixpkgsFunctionsPtr);
+        scanWorkspaceFiles(*WorkspaceRoot, Symbols, Query, &NixpkgsFunctionsCopy);
       }
 
       // Adjust symbol kinds to client capabilities if specified
