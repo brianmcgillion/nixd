@@ -18,8 +18,10 @@
 #include <nixf/Sema/VariableLookup.h>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 
 using namespace nixd;
@@ -28,6 +30,10 @@ using namespace nixf;
 
 namespace {
 
+/// \brief Get the name of a lambda function.
+/// \param Lambda The lambda expression to get the name from.
+/// \return The name of the lambda's argument if it exists, otherwise
+/// "(anonymous lambda)" for lambdas without a named argument.
 std::string getLambdaName(const ExprLambda &Lambda) {
   if (!Lambda.arg() || !Lambda.arg()->id())
     return "(anonymous lambda)";
@@ -39,7 +45,7 @@ void collectWorkspaceSymbols(
     const Node *AST, std::vector<SymbolInformation> &Symbols,
     const VariableLookupAnalysis &VLA, llvm::StringRef Src,
     llvm::StringRef FilePath, const std::string &Query,
-    const std::unordered_set<std::string> *NixpkgsFunctions,
+    const std::optional<std::unordered_set<std::string>> &NixpkgsFunctions,
     const std::string &ContainerName = "") {
   if (!AST)
     return;
@@ -47,17 +53,17 @@ void collectWorkspaceSymbols(
   auto matchesQuery = [&Query](const std::string &Name) {
     if (Query.empty())
       return true;
-    // Case-insensitive substring search
+    // Case-insensitive substring search using locale-independent ASCII lowercase
     std::string LowerName = Name;
     std::string LowerQuery = Query;
     std::transform(LowerName.begin(), LowerName.end(), LowerName.begin(),
-                   ::tolower);
+                   [](unsigned char c) { return std::tolower(c); });
     std::transform(LowerQuery.begin(), LowerQuery.end(), LowerQuery.begin(),
-                   ::tolower);
+                   [](unsigned char c) { return std::tolower(c); });
     return LowerName.find(LowerQuery) != std::string::npos;
   };
 
-  auto isNixpkgsFunction = [NixpkgsFunctions](const std::string &Name) {
+  auto isNixpkgsFunction = [&NixpkgsFunctions](const std::string &Name) {
     if (!NixpkgsFunctions)
       return false;
     return NixpkgsFunctions->count(Name) > 0;
@@ -197,10 +203,27 @@ void collectWorkspaceSymbols(
   }
 }
 
+/// \brief Scan workspace files for symbols matching the query.
+///
+/// This function recursively scans the workspace directory for .nix files,
+/// parses them, and collects symbols that match the provided query string.
+/// To prevent performance issues with large workspaces, scanning is limited
+/// to a maximum number of files.
+///
+/// \param RootPath The root directory path to scan for .nix files
+/// \param Symbols Output vector to append discovered symbols to
+/// \param Query Search query string for filtering symbols (case-insensitive)
+/// \param NixpkgsFunctions Optional set of known nixpkgs function names for
+///                         better symbol classification
+/// \param MaxFiles Maximum number of files to process (default: 1000).
+///                 This limit prevents excessive processing time and memory
+///                 usage in large workspaces. The value of 1000 provides a
+///                 reasonable balance between comprehensive symbol discovery
+///                 and responsive performance.
 void scanWorkspaceFiles(const std::string &RootPath,
                         std::vector<SymbolInformation> &Symbols,
                         const std::string &Query,
-                        const std::unordered_set<std::string> *NixpkgsFunctions,
+                        const std::optional<std::unordered_set<std::string>> &NixpkgsFunctions,
                         size_t MaxFiles = 1000) {
   namespace fs = std::filesystem;
   size_t FilesProcessed = 0;
@@ -227,6 +250,14 @@ void scanWorkspaceFiles(const std::string &RootPath,
         continue;
 
       FilesProcessed++;
+
+      // Check file size before reading to avoid excessive memory usage
+      // Skip files larger than 2MB as they are likely generated or unusual
+      constexpr size_t MaxFileSize = 2 * 1024 * 1024; // 2 MB
+      std::error_code EC;
+      auto FileSize = fs::file_size(Path, EC);
+      if (EC || FileSize > MaxFileSize)
+        continue;
 
       // Read file content
       std::ifstream File(Path);
@@ -277,12 +308,12 @@ void Controller::onWorkspaceSymbol(
         return Symbols;
       }
 
-      // Get a pointer to the nixpkgs index (thread-safe read)
-      const std::unordered_set<std::string> *NixpkgsFunctionsPtr = nullptr;
+      // Make a local copy of the nixpkgs index (thread-safe)
+      std::optional<std::unordered_set<std::string>> NixpkgsFunctionsCopy;
       {
         std::lock_guard G(NixpkgsIndexLock);
         if (!NixpkgsFunctions.empty())
-          NixpkgsFunctionsPtr = &NixpkgsFunctions;
+          NixpkgsFunctionsCopy = NixpkgsFunctions;
       }
 
       // First, collect from open documents
@@ -295,13 +326,13 @@ void Controller::onWorkspaceSymbol(
             continue;
           collectWorkspaceSymbols(TU->ast().get(), Symbols,
                                   *TU->variableLookup(), TU->src(), FilePath,
-                                  Query, NixpkgsFunctionsPtr);
+                                  Query, NixpkgsFunctionsCopy);
         }
       }
 
       // Then scan workspace files if we have a workspace root
       if (WorkspaceRoot) {
-        scanWorkspaceFiles(*WorkspaceRoot, Symbols, Query, NixpkgsFunctionsPtr);
+        scanWorkspaceFiles(*WorkspaceRoot, Symbols, Query, NixpkgsFunctionsCopy);
       }
 
       // Adjust symbol kinds to client capabilities if specified

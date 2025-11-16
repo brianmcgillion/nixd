@@ -25,6 +25,11 @@ using namespace llvm::json;
 using namespace llvm::cl;
 using namespace lspserver;
 
+namespace nixd {
+// Description string used to identify nixpkgs evaluation
+extern constexpr const char* NixpkgsEvalDescription = "nixpkgs entries";
+} // namespace nixd
+
 namespace {
 
 opt<std::string> DefaultNixpkgsExpr{
@@ -43,6 +48,9 @@ opt<std::string> DefaultNixOSOptionsExpr{
 opt<bool> EnableSemanticTokens{"semantic-tokens",
                                desc("Enable/Disable semantic tokens"),
                                init(false), cat(NixdCategory)};
+
+// Nix value type constant for lambda/function (from nix/src/libexpr/value.hh)
+constexpr int NIX_TYPE_LAMBDA = 4;
 
 // Here we try to wrap nixpkgs, nixos options in a single emtpy attrset in test.
 std::string getDefaultNixpkgsExpr() {
@@ -77,7 +85,7 @@ void Controller::evalExprWithProgress(AttrSetClient &Client,
       return;
     }
     // If this is nixpkgs evaluation, build the function index
-    if (Description == "nixpkgs entries") {
+    if (Description == NixpkgsEvalDescription) {
       buildNixpkgsIndex();
     }
   };
@@ -106,13 +114,17 @@ void Controller::buildNixpkgsIndex() {
     std::atomic<size_t> PendingInfos{0};
     std::atomic<bool> Finalized{false};
     std::mutex FunctionsLock;
+    std::mutex FinalizeLock; // Protects the check-and-finalize sequence
   };
   auto State = std::make_shared<IndexState>();
 
   // Helper to finalize the index (called when all work is done)
   auto tryFinalize = [this, State]() {
+    // Lock to ensure atomic check-and-finalize
+    std::lock_guard<std::mutex> lock(State->FinalizeLock);
+    
     // Only finalize once, when both completes and infos are done
-    if (State->PendingCompletes == 0 && State->PendingInfos == 0) {
+    if (State->PendingCompletes.load() == 0 && State->PendingInfos.load() == 0) {
       bool expected = false;
       if (State->Finalized.compare_exchange_strong(expected, true)) {
         std::lock_guard _(NixpkgsIndexLock);
@@ -144,7 +156,7 @@ void Controller::buildNixpkgsIndex() {
         return;
       }
 
-      State->PendingInfos += Resp->size();
+      State->PendingInfos.fetch_add(Resp->size());
 
       // For each attribute, query its info to determine if it's a function
       for (const auto &Name : *Resp) {
@@ -165,8 +177,7 @@ void Controller::buildNixpkgsIndex() {
                           llvm::Expected<AttrPathInfoResponse> InfoResp) {
           if (InfoResp) {
             // Check if it's a lambda (function)
-            // nix::tLambda = 4 (from nix/src/libexpr/value.hh)
-            if (InfoResp->Meta.Type == 4) {
+            if (InfoResp->Meta.Type == NIX_TYPE_LAMBDA) {
               std::lock_guard _(State->FunctionsLock);
               State->Functions.insert(FullName);
             }
@@ -297,7 +308,7 @@ void Controller::
 
   if (nixpkgsClient()) {
     evalExprWithProgress(*nixpkgsClient(), getDefaultNixpkgsExpr(),
-                         "nixpkgs entries");
+                         NixpkgsEvalDescription);
   }
 
   // Launch nixos worker also.
