@@ -228,6 +228,14 @@ void scanWorkspaceFiles(const std::string &RootPath,
 
       FilesProcessed++;
 
+      // Check file size before reading to avoid excessive memory usage
+      // Skip files larger than 2MB as they are likely generated or unusual
+      constexpr size_t MaxFileSize = 2 * 1024 * 1024; // 2 MB
+      std::error_code EC;
+      auto FileSize = fs::file_size(Path, EC);
+      if (EC || FileSize > MaxFileSize)
+        continue;
+
       // Read file content
       std::ifstream File(Path);
       if (!File)
