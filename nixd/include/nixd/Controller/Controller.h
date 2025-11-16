@@ -13,6 +13,7 @@
 #include <boost/asio/thread_pool.hpp>
 
 #include <set>
+#include <unordered_set>
 
 namespace nixd {
 
@@ -43,9 +44,17 @@ private:
   void evalExprWithProgress(AttrSetClient &Client, const EvalExprParams &Params,
                             std::string_view Description);
 
+  void buildNixpkgsIndex();
+
   lspserver::DraftStore Store;
 
   lspserver::ClientCapabilities ClientCaps;
+
+  std::optional<std::string> WorkspaceRoot;
+
+  std::mutex NixpkgsIndexLock;
+  std::unordered_set<std::string>
+      NixpkgsFunctions; // GUARDED_BY(NixpkgsIndexLock)
 
   std::mutex ConfigLock;
   Configuration Config; // GUARDED_BY(ConfigLock)
@@ -171,6 +180,10 @@ private:
   void onDocumentSymbol(
       const lspserver::DocumentSymbolParams &Params,
       lspserver::Callback<std::vector<lspserver::DocumentSymbol>> Reply);
+
+  void onWorkspaceSymbol(
+      const lspserver::WorkspaceSymbolParams &Params,
+      lspserver::Callback<std::vector<lspserver::SymbolInformation>> Reply);
 
   void onSemanticTokens(const lspserver::SemanticTokensParams &Params,
                         lspserver::Callback<lspserver::SemanticTokens> Reply);

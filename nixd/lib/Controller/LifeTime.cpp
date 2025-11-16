@@ -15,6 +15,10 @@
 
 #include <llvm/Support/CommandLine.h>
 
+#include <atomic>
+#include <mutex>
+#include <unordered_set>
+
 using namespace nixd;
 using namespace util;
 using namespace llvm::json;
@@ -72,6 +76,10 @@ void Controller::evalExprWithProgress(AttrSetClient &Client,
       lspserver::elog("{0} eval expr: {1}", Description, Resp.takeError());
       return;
     }
+    // If this is nixpkgs evaluation, build the function index
+    if (Description == "nixpkgs entries") {
+      buildNixpkgsIndex();
+    }
   };
   createWorkDoneProgress({Token});
   beginWorkDoneProgress({.token = Token,
@@ -81,6 +89,95 @@ void Controller::evalExprWithProgress(AttrSetClient &Client,
                              .percentage = false,
                          }});
   Client.evalExpr(Params, std::move(Action));
+}
+
+void Controller::buildNixpkgsIndex() {
+  if (!nixpkgsClient()) {
+    lspserver::log("Cannot build nixpkgs index: nixpkgs client not available");
+    return;
+  }
+
+  lspserver::log("Building nixpkgs function index...");
+
+  // Use shared state for async operations
+  struct IndexState {
+    std::unordered_set<std::string> Functions;
+    std::atomic<size_t> TotalPending{0};
+    std::mutex FunctionsLock;
+  };
+  auto State = std::make_shared<IndexState>();
+
+  // Helper to index a scope (can be top-level or nested like "lib")
+  auto indexScope = [this, State](const std::vector<std::string> &Scope,
+                                  const std::string &ScopePrefix) {
+    AttrPathCompleteParams Params{
+        .Scope = Scope,
+        .Prefix = "",
+    };
+
+    auto OnComplete = [this, ScopePrefix, Scope,
+                       State](llvm::Expected<AttrPathCompleteResponse> Resp) {
+      if (!Resp) {
+        lspserver::elog("Failed to get {0} attributes for indexing: {1}",
+                        ScopePrefix.empty() ? "nixpkgs" : ScopePrefix,
+                        Resp.takeError());
+        return;
+      }
+
+      State->TotalPending += Resp->size();
+
+      // For each attribute, query its info to determine if it's a function
+      for (const auto &Name : *Resp) {
+        AttrPathInfoParams InfoParams;
+        if (ScopePrefix.empty()) {
+          InfoParams = {Name};
+        } else {
+          // For nested scopes, construct the full path
+          auto ScopeVec = Scope;
+          ScopeVec.push_back(Name);
+          InfoParams = ScopeVec;
+        }
+
+        std::string FullName =
+            ScopePrefix.empty() ? Name : ScopePrefix + "." + Name;
+
+        auto OnInfo = [this, FullName,
+                       State](llvm::Expected<AttrPathInfoResponse> InfoResp) {
+          if (InfoResp) {
+            // Check if it's a lambda (function)
+            // nix::tLambda = 4 (from nix/src/libexpr/value.hh)
+            if (InfoResp->Meta.Type == 4) {
+              std::lock_guard _(State->FunctionsLock);
+              State->Functions.insert(FullName);
+            }
+            // Also check if ValueDesc indicates it's a function (has arity)
+            else if (InfoResp->ValueDesc && InfoResp->ValueDesc->Arity > 0) {
+              std::lock_guard _(State->FunctionsLock);
+              State->Functions.insert(FullName);
+            }
+          }
+
+          // When all queries complete, update the index
+          if (--State->TotalPending == 0) {
+            std::lock_guard _(NixpkgsIndexLock);
+            NixpkgsFunctions = std::move(State->Functions);
+            lspserver::log("Nixpkgs index built: {0} functions",
+                           NixpkgsFunctions.size());
+          }
+        };
+
+        nixpkgsClient()->attrpathInfo(InfoParams, std::move(OnInfo));
+      }
+    };
+
+    nixpkgsClient()->attrpathComplete(Params, std::move(OnComplete));
+  };
+
+  // Index top-level nixpkgs (fetchurl, writeShellApplication, etc.)
+  indexScope({}, "");
+
+  // Index lib.* (mkOption, mkIf, strings.*, attrsets.*, etc.)
+  indexScope({"lib"}, "lib");
 }
 
 void Controller::
@@ -118,7 +215,8 @@ void Controller::
        {"renameProvider",
         Object{
             {"prepareProvider", true},
-        }}},
+        }},
+       {"workspaceSymbolProvider", true}},
   };
 
   if (EnableSemanticTokens) {
@@ -167,6 +265,12 @@ void Controller::
   Reply(std::move(Result));
 
   ClientCaps = Params.capabilities;
+
+  // Store workspace root for workspace-wide operations
+  if (Params.rootUri)
+    WorkspaceRoot = Params.rootUri->file().str();
+  else if (Params.rootPath)
+    WorkspaceRoot = *Params.rootPath;
 
   // Start default workers.
   startNixpkgs(NixpkgsEval);
