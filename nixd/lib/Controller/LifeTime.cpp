@@ -106,13 +106,17 @@ void Controller::buildNixpkgsIndex() {
     std::atomic<size_t> PendingInfos{0};
     std::atomic<bool> Finalized{false};
     std::mutex FunctionsLock;
+    std::mutex FinalizeLock; // Protects the check-and-finalize sequence
   };
   auto State = std::make_shared<IndexState>();
 
   // Helper to finalize the index (called when all work is done)
   auto tryFinalize = [this, State]() {
+    // Lock to ensure atomic check-and-finalize
+    std::lock_guard<std::mutex> lock(State->FinalizeLock);
+    
     // Only finalize once, when both completes and infos are done
-    if (State->PendingCompletes == 0 && State->PendingInfos == 0) {
+    if (State->PendingCompletes.load() == 0 && State->PendingInfos.load() == 0) {
       bool expected = false;
       if (State->Finalized.compare_exchange_strong(expected, true)) {
         std::lock_guard _(NixpkgsIndexLock);
