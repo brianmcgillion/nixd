@@ -198,6 +198,23 @@ void collectWorkspaceSymbols(
   }
 }
 
+/// \brief Scan workspace files for symbols matching the query.
+///
+/// This function recursively scans the workspace directory for .nix files,
+/// parses them, and collects symbols that match the provided query string.
+/// To prevent performance issues with large workspaces, scanning is limited
+/// to a maximum number of files.
+///
+/// \param RootPath The root directory path to scan for .nix files
+/// \param Symbols Output vector to append discovered symbols to
+/// \param Query Search query string for filtering symbols (case-insensitive)
+/// \param NixpkgsFunctions Optional set of known nixpkgs function names for
+///                         better symbol classification
+/// \param MaxFiles Maximum number of files to process (default: 1000).
+///                 This limit prevents excessive processing time and memory
+///                 usage in large workspaces. The value of 1000 provides a
+///                 reasonable balance between comprehensive symbol discovery
+///                 and responsive performance.
 void scanWorkspaceFiles(const std::string &RootPath,
                         std::vector<SymbolInformation> &Symbols,
                         const std::string &Query,
