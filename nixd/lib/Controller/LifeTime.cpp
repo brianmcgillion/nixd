@@ -27,7 +27,7 @@ using namespace lspserver;
 
 namespace nixd {
 // Description string used to identify nixpkgs evaluation
-extern constexpr const char* NixpkgsEvalDescription = "nixpkgs entries";
+inline constexpr const char* NixpkgsEvalDescription = "nixpkgs entries";
 } // namespace nixd
 
 namespace {
