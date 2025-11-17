@@ -10,7 +10,7 @@ using llvm::json::Value;
 
 namespace nixd {
 // Forward declaration - defined in LifeTime.cpp
-extern constexpr const char* NixpkgsEvalDescription;
+extern const char* NixpkgsEvalDescription;
 } // namespace nixd
 
 bool nixd::fromJSON(const Value &Params, Configuration::Diagnostic &R,
