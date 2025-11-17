@@ -25,6 +25,11 @@ using namespace llvm::json;
 using namespace llvm::cl;
 using namespace lspserver;
 
+namespace nixd {
+// Description string used to identify nixpkgs evaluation
+extern constexpr const char* NixpkgsEvalDescription = "nixpkgs entries";
+} // namespace nixd
+
 namespace {
 
 opt<std::string> DefaultNixpkgsExpr{
@@ -77,7 +82,7 @@ void Controller::evalExprWithProgress(AttrSetClient &Client,
       return;
     }
     // If this is nixpkgs evaluation, build the function index
-    if (Description == "nixpkgs entries") {
+    if (Description == NixpkgsEvalDescription) {
       buildNixpkgsIndex();
     }
   };
@@ -301,7 +306,7 @@ void Controller::
 
   if (nixpkgsClient()) {
     evalExprWithProgress(*nixpkgsClient(), getDefaultNixpkgsExpr(),
-                         "nixpkgs entries");
+                         NixpkgsEvalDescription);
   }
 
   // Launch nixos worker also.
