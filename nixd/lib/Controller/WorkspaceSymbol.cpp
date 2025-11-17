@@ -30,6 +30,10 @@ using namespace nixf;
 
 namespace {
 
+/// \brief Get the name of a lambda function.
+/// \param Lambda The lambda expression to get the name from.
+/// \return The name of the lambda's argument if it exists, otherwise
+/// "(anonymous lambda)" for lambdas without a named argument.
 std::string getLambdaName(const ExprLambda &Lambda) {
   if (!Lambda.arg() || !Lambda.arg()->id())
     return "(anonymous lambda)";
