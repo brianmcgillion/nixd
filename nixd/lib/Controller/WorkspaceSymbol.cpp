@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 
 using namespace nixd;
@@ -39,7 +40,7 @@ void collectWorkspaceSymbols(
     const Node *AST, std::vector<SymbolInformation> &Symbols,
     const VariableLookupAnalysis &VLA, llvm::StringRef Src,
     llvm::StringRef FilePath, const std::string &Query,
-    const std::unordered_set<std::string> *NixpkgsFunctions,
+    const std::optional<std::unordered_set<std::string>> &NixpkgsFunctions,
     const std::string &ContainerName = "") {
   if (!AST)
     return;
@@ -57,7 +58,7 @@ void collectWorkspaceSymbols(
     return LowerName.find(LowerQuery) != std::string::npos;
   };
 
-  auto isNixpkgsFunction = [NixpkgsFunctions](const std::string &Name) {
+  auto isNixpkgsFunction = [&NixpkgsFunctions](const std::string &Name) {
     if (!NixpkgsFunctions)
       return false;
     return NixpkgsFunctions->count(Name) > 0;
@@ -200,7 +201,7 @@ void collectWorkspaceSymbols(
 void scanWorkspaceFiles(const std::string &RootPath,
                         std::vector<SymbolInformation> &Symbols,
                         const std::string &Query,
-                        const std::unordered_set<std::string> *NixpkgsFunctions,
+                        const std::optional<std::unordered_set<std::string>> &NixpkgsFunctions,
                         size_t MaxFiles = 1000) {
   namespace fs = std::filesystem;
   size_t FilesProcessed = 0;
@@ -277,12 +278,12 @@ void Controller::onWorkspaceSymbol(
         return Symbols;
       }
 
-      // Get a pointer to the nixpkgs index (thread-safe read)
-      const std::unordered_set<std::string> *NixpkgsFunctionsPtr = nullptr;
+      // Make a local copy of the nixpkgs index (thread-safe)
+      std::optional<std::unordered_set<std::string>> NixpkgsFunctionsCopy;
       {
         std::lock_guard G(NixpkgsIndexLock);
         if (!NixpkgsFunctions.empty())
-          NixpkgsFunctionsPtr = &NixpkgsFunctions;
+          NixpkgsFunctionsCopy = NixpkgsFunctions;
       }
 
       // First, collect from open documents
@@ -295,13 +296,13 @@ void Controller::onWorkspaceSymbol(
             continue;
           collectWorkspaceSymbols(TU->ast().get(), Symbols,
                                   *TU->variableLookup(), TU->src(), FilePath,
-                                  Query, NixpkgsFunctionsPtr);
+                                  Query, NixpkgsFunctionsCopy);
         }
       }
 
       // Then scan workspace files if we have a workspace root
       if (WorkspaceRoot) {
-        scanWorkspaceFiles(*WorkspaceRoot, Symbols, Query, NixpkgsFunctionsPtr);
+        scanWorkspaceFiles(*WorkspaceRoot, Symbols, Query, NixpkgsFunctionsCopy);
       }
 
       // Adjust symbol kinds to client capabilities if specified
