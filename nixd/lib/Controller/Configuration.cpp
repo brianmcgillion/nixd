@@ -8,6 +8,11 @@ using namespace lspserver;
 using llvm::json::ObjectMapper;
 using llvm::json::Value;
 
+namespace nixd {
+// Forward declaration - defined in LifeTime.cpp
+extern const char* NixpkgsEvalDescription;
+} // namespace nixd
+
 bool nixd::fromJSON(const Value &Params, Configuration::Diagnostic &R,
                     llvm::json::Path P) {
   ObjectMapper O(Params, P);
@@ -61,7 +66,7 @@ void Controller::updateConfig(Configuration NewConfig) {
     /// Evaluate nixpkgs and options, using user-provided config.
     if (nixpkgsClient()) {
       evalExprWithProgress(*nixpkgsClient(), Config.nixpkgs.expr,
-                           "nixpkgs entries");
+                           NixpkgsEvalDescription);
     }
   }
   if (!Config.options.empty()) {
