@@ -44,6 +44,9 @@ opt<bool> EnableSemanticTokens{"semantic-tokens",
                                desc("Enable/Disable semantic tokens"),
                                init(false), cat(NixdCategory)};
 
+// Nix value type constant for lambda/function (from nix/src/libexpr/value.hh)
+constexpr int NIX_TYPE_LAMBDA = 4;
+
 // Here we try to wrap nixpkgs, nixos options in a single emtpy attrset in test.
 std::string getDefaultNixpkgsExpr() {
   if (LitTest && !DefaultNixpkgsExpr.getNumOccurrences()) {
@@ -169,8 +172,7 @@ void Controller::buildNixpkgsIndex() {
                           llvm::Expected<AttrPathInfoResponse> InfoResp) {
           if (InfoResp) {
             // Check if it's a lambda (function)
-            // nix::tLambda = 4 (from nix/src/libexpr/value.hh)
-            if (InfoResp->Meta.Type == 4) {
+            if (InfoResp->Meta.Type == NIX_TYPE_LAMBDA) {
               std::lock_guard _(State->FunctionsLock);
               State->Functions.insert(FullName);
             }
